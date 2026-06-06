@@ -243,8 +243,8 @@ class SIPWorker:
                 success, reason = await self._call_pixel(ua, acc, x, y, cid)
                 duration = round(time.time() - t0, 1)
 
-                # Record attempt regardless of outcome so grace period applies.
-                self._attempt_times[f'{x}_{y}'] = time.time()
+                # # Record attempt regardless of outcome so grace period applies.
+                # self._attempt_times[f'{x}_{y}'] = time.time()
 
                 with self._lock:
                     if success:

@@ -120,9 +120,8 @@ class SIPWorker:
         s['history'] = list(self._history[-20:])
         if s.get('started_at'):
             elapsed = time.time() - s['started_at']
-            done = s['pixels_done'] + s['pixels_failed']
             s['elapsed_s'] = round(elapsed)
-            s['rate_per_hour'] = round(done / elapsed * 3600, 1) if elapsed > 5 and done else 0
+            s['rate_per_hour'] = round(s['pixels_done'] / elapsed * 3600, 1) if elapsed > 5 and s['pixels_done'] else 0
         return s
 
     # ── audio monitoring ──────────────────────────────────────────────────────

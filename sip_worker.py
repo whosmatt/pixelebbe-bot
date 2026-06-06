@@ -19,10 +19,41 @@ import threading
 import time
 from typing import Optional
 
+import numpy as np
+
 import config
 from audio_detector import AnnouncementDetector, FRAME_SAMPLES
 
 log = logging.getLogger(__name__)
+
+# DTMF tone generation for local monitoring
+_DTMF_FREQS = {
+    '0': (941, 1336), '1': (697, 1209), '2': (697, 1336), '3': (697, 1477),
+    '4': (770, 1209), '5': (770, 1336), '6': (770, 1477), '7': (852, 1209),
+    '8': (852, 1336), '9': (852, 1477), '*': (941, 1209), '#': (941, 1477),
+}
+_SR = 8000
+_FRAME = _SR * 20 // 1000  # 160 samples = 20 ms
+
+
+def _dtmf_frames(sequence: str, duration_ms: int, gap_ms: int) -> list[bytes]:
+    """Return 20ms PCM16 frames encoding the DTMF sequence (for local monitoring)."""
+    frames = []
+    for digit in sequence:
+        if digit not in _DTMF_FREQS:
+            continue
+        f1, f2 = _DTMF_FREQS[digit]
+        n_tone = _SR * duration_ms // 1000
+        t = np.arange(n_tone) / _SR
+        tone = ((np.sin(2 * np.pi * f1 * t) + np.sin(2 * np.pi * f2 * t)) * 0.4 * 16000).astype(np.int16)
+        gap = np.zeros(_SR * gap_ms // 1000, dtype=np.int16)
+        samples = np.concatenate([tone, gap])
+        for i in range(0, len(samples), _FRAME):
+            chunk = samples[i:i + _FRAME]
+            if len(chunk) < _FRAME:
+                chunk = np.pad(chunk, (0, _FRAME - len(chunk)))
+            frames.append(chunk.tobytes())
+    return frames
 
 FRAME_BYTES = FRAME_SAMPLES * 2  # 160 samples × 2 bytes = 320 bytes per 20 ms
 
@@ -307,6 +338,9 @@ class SIPWorker:
             except Exception:
                 pass
             return False, f'dtmf_failed: {e}'
+
+        for frame in _dtmf_frames(dtmf_seq, config.DTMF_TONE_MS, config.DTMF_GAP_MS):
+            self._broadcast_audio(frame)
 
         with self._lock:
             self._status['call_status'] = 'confirming'

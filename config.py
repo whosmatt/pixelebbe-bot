@@ -29,7 +29,7 @@ DTMF_SAMPLE_RATE = 8000
 
 ANNOUNCEMENT_TIMEOUT_S  = 90
 WHISPER_MODEL           = 'tiny'
-WHISPER_TRIGGER_KEYWORDS = ['willkommen', 'pixelebbe', 'pixel', 'eingeben', 'gib']
+WHISPER_TRIGGER_KEYWORDS = ['willkommen']
 DRAWING_FILE     = 'drawing.json'
 
 PALETTE = [

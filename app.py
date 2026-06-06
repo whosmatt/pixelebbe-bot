@@ -31,9 +31,9 @@ logging.basicConfig(
     format='%(asctime)s %(levelname)s %(name)s: %(message)s',
     stream=sys.stdout,
 )
-# Promote sip_worker and audio_detector to DEBUG so FIFO / RMS logs are visible
 logging.getLogger('sip_worker').setLevel(logging.DEBUG)
 logging.getLogger('audio_detector').setLevel(logging.DEBUG)
+logging.getLogger('werkzeug').setLevel(logging.WARNING)   # silence per-request GET noise
 log = logging.getLogger(__name__)
 
 # ── Flask app ─────────────────────────────────────────────────────────────────

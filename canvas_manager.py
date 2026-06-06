@@ -149,10 +149,16 @@ class CanvasManager:
             png_bytes = resp.content
             img = Image.open(io.BytesIO(png_bytes)).convert('RGB')
             arr = np.array(img)
+            # view.png has a 3-pixel left border and 1-pixel top border.
+            # Canvas coordinate (x, y) maps to image pixel (x+3, y+1).
+            _ix, _iy = 3, 1
             pixels = {}
-            for y in range(min(config.CANVAS_HEIGHT, arr.shape[0])):
-                for x in range(min(config.CANVAS_WIDTH, arr.shape[1])):
-                    r, g, b = int(arr[y, x, 0]), int(arr[y, x, 1]), int(arr[y, x, 2])
+            for y in range(config.CANVAS_HEIGHT):
+                for x in range(config.CANVAS_WIDTH):
+                    iy, ix = y + _iy, x + _ix
+                    if iy >= arr.shape[0] or ix >= arr.shape[1]:
+                        continue
+                    r, g, b = int(arr[iy, ix, 0]), int(arr[iy, ix, 1]), int(arr[iy, ix, 2])
                     cid = nearest_palette_id(r, g, b)
                     pixels[f'{x}_{y}'] = cid
             with self._lock:

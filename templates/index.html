@@ -300,7 +300,12 @@ function refreshBg() {
       const img = new Image();
       img.onload = () => {
         bgCtx.imageSmoothingEnabled = false;
-        bgCtx.drawImage(img, 0, 0, 640, 480);
+        // view.png has a 3-pixel left border and 1-pixel top border outside the
+        // actual canvas grid.  Crop those out so overlay pixels align 1-to-1.
+        const sx = 3, sy = 1;
+        bgCtx.drawImage(img,
+          sx, sy, Math.min(CW, img.naturalWidth - sx), Math.min(CH, img.naturalHeight - sy),
+          0,  0,  CW * SCALE, CH * SCALE);
       };
       img.src = 'data:image/png;base64,' + d.data;
     });

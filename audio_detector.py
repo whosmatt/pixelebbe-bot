@@ -88,12 +88,11 @@ class AnnouncementDetector:
     """
 
     # energy state-machine thresholds
-    # G.711 A-law on a phone line typically decodes to RMS ~200-3000 for speech.
-    # Set conservatively low so any signal registers; tune up if false triggers.
-    SILENCE_RMS = 150          # RMS below this is "silence"
-    MIN_AUDIO_FRAMES = 20      # 400 ms — minimum "real" audio segment
-    MIN_SILENCE_FRAMES = 18    # 360 ms — minimum silence to end a segment
-    MUSIC_MIN_FRAMES = 150     # 3 s — audio segment this long is classified as music
+    # G.711 decoded PCM16 on a phone line: RMS ~200-5000 for speech/audio.
+    SILENCE_RMS = 150           # RMS below this is "silence"
+    MIN_AUDIO_FRAMES = 20       # 400 ms — minimum "real" audio segment
+    MIN_SILENCE_FRAMES = 18     # 360 ms — minimum silence to end a short segment
+    MUSIC_MIN_FRAMES = 150      # 3 s — segment this long is treated as "music/long audio"
 
     # whisper parameters
     WHISPER_CHUNK_S = 4        # seconds of audio to transcribe at once
@@ -116,6 +115,7 @@ class AnnouncementDetector:
         self._audio_buf: deque[np.int16] = deque(maxlen=_cap)
         self._last_whisper_t: float = 0.0
         self._keyword_hit: bool = False
+        self._whisper_busy: bool = False  # True while background thread is transcribing
 
     # ------------------------------------------------------------------ #
 
@@ -141,22 +141,19 @@ class AnnouncementDetector:
         # feed whisper buffer
         self._audio_buf.extend(samples.tolist())
 
-        # --- Whisper layer (async-ish: runs every WHISPER_STEP_S seconds) ---
-        if WHISPER_AVAILABLE and elapsed > 2.0:
+        # --- Whisper layer: fire in a background thread so it never blocks the
+        #     asyncio event loop (inference takes 100ms–1s on CPU).  Only one
+        #     thread runs at a time; skip if the previous one is still busy. ---
+        if WHISPER_AVAILABLE and elapsed > 2.0 and not self._whisper_busy:
             now = time.time()
             if now - self._last_whisper_t >= self.WHISPER_STEP_S:
                 self._last_whisper_t = now
                 buf = np.array(list(self._audio_buf), dtype=np.int16)
-                try:
-                    text = _transcribe_buffer(buf)
-                    log.debug("Whisper: %r", text)
-                    if any(kw in text for kw in config.WHISPER_TRIGGER_KEYWORDS):
-                        self._keyword_hit = True
-                        log.info("Whisper keyword hit in: %r", text)
-                except Exception as e:
-                    log.debug("Whisper error: %s", e)
+                self._whisper_busy = True
+                threading.Thread(target=self._run_whisper, args=(buf,), daemon=True).start()
 
-        # If Whisper already found the keyword, wait for silence to confirm end
+        # If Whisper already found the keyword (set by background thread), wait for silence
+
         if self._keyword_hit:
             rms = _rms(samples)
             if rms < self.SILENCE_RMS:
@@ -191,13 +188,14 @@ class AnnouncementDetector:
 
                 if seg >= self.MIN_AUDIO_FRAMES:
                     if seg >= self.MUSIC_MIN_FRAMES:
-                        # Long segment = music; note it and keep waiting
+                        # Long segment (≥3s): IVR hold/pre-announcement audio. Mark seen,
+                        # don't fire — Whisper or the hard timeout handles the rest.
                         self._music_seen = True
-                        log.debug("Energy: music segment (%.1fs)", seg * 0.02)
+                        log.debug("Energy: long audio segment (%.1fs)", seg * 0.02)
                     else:
-                        # Short segment after [optionally] music = announcement
+                        # Short segment (400ms–3s) after optional music = announcement done.
                         log.info(
-                            "Announcement end via energy (seg=%.1fs, music_seen=%s)",
+                            "Announcement end via energy: short audio (seg=%.1fs, music_seen=%s)",
                             seg * 0.02, self._music_seen,
                         )
                         self._fire()
@@ -210,6 +208,19 @@ class AnnouncementDetector:
             return True
 
         return False
+
+    def _run_whisper(self, buf: np.ndarray):
+        """Background thread: transcribe buf and set _keyword_hit if matched."""
+        try:
+            text = _transcribe_buffer(buf)
+            log.debug("Whisper: %r", text)
+            if any(kw in text for kw in config.WHISPER_TRIGGER_KEYWORDS):
+                self._keyword_hit = True
+                log.info("Whisper keyword hit in: %r", text)
+        except Exception as e:
+            log.debug("Whisper error: %s", e)
+        finally:
+            self._whisper_busy = False
 
     def _fire(self):
         self.triggered = True

@@ -558,16 +558,6 @@ function updateStatus(st) {
       </div>`;
     }).join('');
   }
-
-  // queue preview
-  const qEl = document.getElementById('queue-preview');
-  if (st.queue_preview && st.queue_preview.length) {
-    qEl.innerHTML = st.queue_preview.map(p =>
-      `<span style="margin-right:8px">(${p.x},${p.y})→${p.color_id}</span>`
-    ).join('');
-  } else {
-    qEl.textContent = 'empty';
-  }
 }
 
 // ── announcement timeout config ───────────────────────────────────────────────

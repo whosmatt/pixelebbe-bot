@@ -149,13 +149,14 @@ class CanvasManager:
             png_bytes = resp.content
             img = Image.open(io.BytesIO(png_bytes)).convert('RGB')
             arr = np.array(img)
-            # view.png has a 3-pixel left border and 1-pixel top border.
-            # Canvas coordinate (x, y) maps to image pixel (x+3, y+1).
-            _ix, _iy = 3, 1
+            # view.png is 328x248 with 8px rulers on the left and top edges.
+            # The canvas starts at image pixel (8,8) as a 320x240 region where
+            # each 2x2 block is one phone-addressable pixel (x, y).
             pixels = {}
             for y in range(config.CANVAS_HEIGHT):
                 for x in range(config.CANVAS_WIDTH):
-                    iy, ix = y + _iy, x + _ix
+                    iy = 8 + y * 2
+                    ix = 8 + x * 2
                     if iy >= arr.shape[0] or ix >= arr.shape[1]:
                         continue
                     r, g, b = int(arr[iy, ix, 0]), int(arr[iy, ix, 1]), int(arr[iy, ix, 2])

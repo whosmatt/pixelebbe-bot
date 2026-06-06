@@ -48,6 +48,7 @@ header h1 { font-size: 15px; color: #aef; }
 #bg-canvas, #draw-canvas, #grid-canvas {
   position: absolute; top: 0; left: 0;
   width: 640px; height: 480px;
+  image-rendering: pixelated;
 }
 #draw-canvas { cursor: crosshair; }
 #grid-canvas { pointer-events: none; opacity: 0.18; }
@@ -300,12 +301,9 @@ function refreshBg() {
       const img = new Image();
       img.onload = () => {
         bgCtx.imageSmoothingEnabled = false;
-        // view.png has a 3-pixel left border and 1-pixel top border outside the
-        // actual canvas grid.  Crop those out so overlay pixels align 1-to-1.
-        const sx = 3, sy = 1;
-        bgCtx.drawImage(img,
-          sx, sy, Math.min(CW, img.naturalWidth - sx), Math.min(CH, img.naturalHeight - sy),
-          0,  0,  CW * SCALE, CH * SCALE);
+        // view.png is 328x248 with 8px rulers. Canvas starts at (8,8), 320x240.
+        // Each 2x2 image block = one phone pixel; crop rulers and scale 2x → 4x per pixel.
+        bgCtx.drawImage(img, 8, 8, 320, 240, 0, 0, CW * SCALE, CH * SCALE);
       };
       img.src = 'data:image/png;base64,' + d.data;
     });

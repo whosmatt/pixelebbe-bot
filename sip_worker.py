@@ -2,13 +2,15 @@
 SIP call worker — pure-Python SIP/RTP via opensip.
 
 Architecture:
-  SIPWorker  – thread-safe public API (start/stop/pause/resume)
-               Runs a dedicated asyncio event loop in a background thread.
-               Per-pixel: register once → invite → on_pcm callback feeds
-               AnnouncementDetector → send_dtmf → hangup → repeat.
-
-No subprocess.  No netstrings.  No VU-meter approximation.
-Real decoded PCM16 frames arrive via call.on_pcm().
+  On start, enters a monitor loop:
+    1. Fetch fresh canvas.
+    2. Diff drawing vs canvas — any mismatched pixel that isn't in the
+       post-call grace window becomes a candidate.
+    3. Call the first candidate via the SIP hotline.
+    4. Sleep INTER_CALL_DELAY, then repeat.
+  When no mismatches exist the loop sleeps VERIFY_INTERVAL_S before rechecking.
+  There is no static queue and no permanent "done" state — a pixel that gets
+  changed by another user will simply appear as a mismatch on the next check.
 """
 import asyncio
 import logging
@@ -27,11 +29,10 @@ FRAME_BYTES = FRAME_SAMPLES * 2  # 160 samples × 2 bytes = 320 bytes per 20 ms
 
 class SIPWorker:
 
-    def __init__(self):
+    def __init__(self, canvas_mgr):
+        self._canvas_mgr = canvas_mgr
         self._lock = threading.Lock()
         self._thread: Optional[threading.Thread] = None
-
-        self._queue: list[tuple[int, int, int]] = []
         self._history: list[dict] = []
 
         self._status = {
@@ -44,25 +45,23 @@ class SIPWorker:
         self._audio_subscribers: list[queue.Queue] = []
         self._audio_sub_lock = threading.Lock()
 
-        # Thread-safe flags — set by Flask thread, checked by async loop
         self._stop_flag = threading.Event()
         self._pause_flag = threading.Event()
-
         self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+        # Keyed by 'x_y'; written/read only inside the asyncio event loop.
+        self._attempt_times: dict[str, float] = {}
 
     # ── public control ────────────────────────────────────────────────────────
 
-    def start(self, pixel_queue: list[tuple[int, int, int]]):
+    def start(self):
         with self._lock:
             if self._status['running']:
                 return
-            self._queue = list(pixel_queue)
             self._status.update({
                 'running': True, 'paused': False,
-                'pixels_done': 0, 'pixels_failed': 0,
-                'pixels_pending': len(pixel_queue),
-                'call_count': 0, 'last_error': None,
-                'started_at': time.time(),
+                'pixels_done': 0, 'pixels_failed': 0, 'pixels_pending': 0,
+                'call_count': 0, 'last_error': None, 'started_at': time.time(),
             })
             self._stop_flag.clear()
             self._pause_flag.clear()
@@ -88,9 +87,6 @@ class SIPWorker:
         with self._lock:
             s = dict(self._status)
         s['history'] = list(self._history[-20:])
-        s['queue_preview'] = [
-            {'x': x, 'y': y, 'color_id': c} for x, y, c in self._queue[:30]
-        ]
         if s.get('started_at'):
             elapsed = time.time() - s['started_at']
             done = s['pixels_done'] + s['pixels_failed']
@@ -144,9 +140,7 @@ class SIPWorker:
             self._loop = None
             with self._lock:
                 self._status.update({
-                    'running': False,
-                    'call_status': 'idle',
-                    'current_pixel': None,
+                    'running': False, 'call_status': 'idle', 'current_pixel': None,
                 })
 
     async def _async_run(self):
@@ -180,12 +174,38 @@ class SIPWorker:
             while not self._stop_flag.is_set():
                 while self._pause_flag.is_set() and not self._stop_flag.is_set():
                     await asyncio.sleep(0.5)
+                if self._stop_flag.is_set():
+                    break
+
+                # Fetch canvas in thread pool so the event loop stays responsive.
+                loop = asyncio.get_event_loop()
+                canvas_pixels = await loop.run_in_executor(
+                    None, lambda: self._canvas_mgr.get_canvas_pixels(force_refresh=True),
+                )
+                drawing = self._canvas_mgr.get_drawing()
+                now = time.time()
+
+                # Find mismatched pixels not currently within the post-call grace window.
+                mismatches: list[tuple[int, int, int]] = []
+                for key, target_cid in drawing.items():
+                    if canvas_pixels.get(key) != target_cid:
+                        if now - self._attempt_times.get(key, 0) >= config.VERIFY_GRACE_S:
+                            x, y = map(int, key.split('_'))
+                            mismatches.append((x, y, target_cid))
+                mismatches.sort(key=lambda t: (t[1], t[0]))  # top-to-bottom, left-to-right
 
                 with self._lock:
-                    if not self._queue:
-                        self._status['running'] = False
-                        break
-                    x, y, cid = self._queue[0]
+                    self._status['pixels_pending'] = len(mismatches)
+
+                if not mismatches:
+                    log.debug("No mismatches; rechecking in %ds", config.VERIFY_INTERVAL_S)
+                    with self._lock:
+                        self._status['call_status'] = 'idle'
+                    await asyncio.sleep(config.VERIFY_INTERVAL_S)
+                    continue
+
+                x, y, cid = mismatches[0]
+                with self._lock:
                     self._status['current_pixel'] = {'x': x, 'y': y, 'color_id': cid}
                     self._status['call_status'] = 'dialing'
 
@@ -193,13 +213,14 @@ class SIPWorker:
                 success, reason = await self._call_pixel(ua, acc, x, y, cid)
                 duration = round(time.time() - t0, 1)
 
+                # Record attempt regardless of outcome so grace period applies.
+                self._attempt_times[f'{x}_{y}'] = time.time()
+
                 with self._lock:
-                    self._queue.pop(0)
                     if success:
                         self._status['pixels_done'] += 1
                     else:
                         self._status['pixels_failed'] += 1
-                    self._status['pixels_pending'] = len(self._queue)
                     self._status['call_count'] += 1
                     self._status['current_pixel'] = None
                     self._status['call_status'] = 'idle'
@@ -217,15 +238,13 @@ class SIPWorker:
                 log.info("Pixel (%d,%d) c%d → %s [%s] %.1fs",
                          x, y, cid, 'OK' if success else 'FAIL', reason, duration)
 
-                if self._queue and not self._stop_flag.is_set():
+                if not self._stop_flag.is_set():
                     await asyncio.sleep(config.INTER_CALL_DELAY)
         finally:
             await ua.stop()
             with self._lock:
                 self._status.update({
-                    'running': False,
-                    'call_status': 'idle',
-                    'current_pixel': None,
+                    'running': False, 'call_status': 'idle', 'current_pixel': None,
                 })
 
     async def _call_pixel(self, ua, acc, x: int, y: int, color_id: int) -> tuple[bool, str]:
@@ -270,9 +289,6 @@ class SIPWorker:
             await asyncio.wait_for(triggered.wait(), timeout=float(config.CALL_TIMEOUT_S))
         except asyncio.TimeoutError:
             log.warning("Announcement detection timed out for (%d,%d); sending DTMF anyway", x, y)
-
-        # Keep on_audio registered so audio monitoring continues through DTMF and hangup.
-        # process_frame() is a no-op once triggered, so only _broadcast_audio runs.
 
         with self._lock:
             self._status['call_status'] = 'sending_dtmf'

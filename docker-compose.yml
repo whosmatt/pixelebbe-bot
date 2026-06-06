@@ -2,7 +2,7 @@ services:
   pixelebbe:
     build: .
     ports:
-      - "5001:5001"
+      - "8000:5001"
     environment:
       - SIP_SERVER=sip.micropoc.de
       - SIP_USER=9379

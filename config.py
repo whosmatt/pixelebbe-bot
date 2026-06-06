@@ -21,7 +21,10 @@ CANVAS_HEIGHT    = 120
 CANVAS_REFRESH_S = 10
 
 INTER_CALL_DELAY = 5
-CALL_TIMEOUT_S   = 120
+CALL_TIMEOUT_S   = 40
+
+VERIFY_INTERVAL_S = 60   # seconds between pixel accuracy checks
+VERIFY_GRACE_S    = 90   # min seconds after a call before re-queuing a mismatched pixel
 
 DTMF_TONE_MS     = 120
 DTMF_GAP_MS      = 80

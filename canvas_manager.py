@@ -113,30 +113,12 @@ class CanvasManager:
             return {'ok': False, 'data': None}
         return {'ok': True, 'data': base64.b64encode(png).decode()}
 
-    def build_queue(self, skip_matching: bool = True) -> list[tuple[int, int, int]]:
-        """
-        Return list of (x, y, color_id) for all drawn pixels.
-        If skip_matching=True, skip pixels that already match the current canvas.
-        Ordering: top-to-bottom, left-to-right.
-        """
+    def get_canvas_pixels(self, force_refresh: bool = False) -> dict[str, int]:
+        """Return {x_y: color_id} for the live canvas, refreshing if forced or stale."""
+        if force_refresh:
+            self._refresh_canvas()
         with self._lock:
-            drawing = dict(self._drawing)
-            canvas = dict(self._canvas_pixels)
-
-        queue = []
-        for key, cid in sorted(drawing.items()):
-            if skip_matching and canvas.get(key) == cid:
-                continue
-            try:
-                x_str, y_str = key.split('_')
-                x, y = int(x_str), int(y_str)
-            except ValueError:
-                continue
-            queue.append((x, y, cid))
-
-        queue.sort(key=lambda t: (t[1], t[0]))
-        log.info("Queue built: %d pixels (skip_matching=%s)", len(queue), skip_matching)
-        return queue
+            return dict(self._canvas_pixels)
 
     # ------------------------------------------------------------------ #
     # Internal                                                             #

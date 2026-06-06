@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 app = Flask(__name__)
 
 canvas_mgr = CanvasManager()
-worker = SIPWorker()
+worker = SIPWorker(canvas_mgr)
 
 atexit.register(worker.shutdown)
 
@@ -86,12 +86,8 @@ def api_control():
     action = body.get('action', '')
 
     if action == 'start':
-        skip_matching = body.get('skip_matching', True)
-        queue = canvas_mgr.build_queue(skip_matching=skip_matching)
-        if not queue:
-            return jsonify({'ok': False, 'msg': 'Drawing layer is empty'})
-        worker.start(queue)
-        return jsonify({'ok': True, 'queued': len(queue)})
+        worker.start()
+        return jsonify({'ok': True})
 
     elif action == 'stop':
         worker.stop()
@@ -140,8 +136,22 @@ def api_palette():
     ])
 
 
+@app.get('/api/config')
+def api_get_config():
+    return jsonify({'announcement_timeout_s': config.ANNOUNCEMENT_TIMEOUT_S})
+
+
+@app.post('/api/config')
+def api_set_config():
+    data = request.get_json(silent=True) or {}
+    if 'announcement_timeout_s' in data:
+        v = int(data['announcement_timeout_s'])
+        if 5 <= v <= 300:
+            config.ANNOUNCEMENT_TIMEOUT_S = v
+    return jsonify({'ok': True, 'announcement_timeout_s': config.ANNOUNCEMENT_TIMEOUT_S})
+
+
 # ── entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':
-    log.info("Starting pixelebbe bot on http://0.0.0.0:5001")
     app.run(host='0.0.0.0', port=5001, debug=False, use_reloader=False)

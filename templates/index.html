@@ -124,8 +124,6 @@ label { display: flex; align-items: center; gap: 4px; color: #aaa; }
 .hist-ok { color: #4f4; }
 .hist-fail { color: #f66; }
 
-#queue-preview { font-size: 11px; max-height: 160px; overflow-y: auto; color: #aaa; }
-
 /* progress bar */
 .prog-bar { height: 8px; background: #222; border-radius: 4px; overflow: hidden; margin-top: 4px; }
 .prog-fill { height: 100%; background: #4af; transition: width 0.4s; }
@@ -158,7 +156,6 @@ label { display: flex; align-items: center; gap: 4px; color: #aaa; }
     <div id="toolbar">
       <button id="btn-refresh" title="Refresh background canvas">↺ Canvas</button>
       <label><input type="checkbox" id="chk-grid" checked> Grid</label>
-      <label><input type="checkbox" id="chk-skip" checked> Skip matching pixels</label>
       <span style="flex:1"></span>
       <button id="btn-clear" class="danger">Clear drawing</button>
     </div>
@@ -179,6 +176,12 @@ label { display: flex; align-items: center; gap: 4px; color: #aaa; }
         <canvas id="level-meter" width="140" height="12"
                 style="border:1px solid #333;border-radius:2px;vertical-align:middle"></canvas>
         <span id="monitor-label" style="font-size:11px;color:#666">off</span>
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:6px;font-size:12px">
+        <label for="inp-timeout" style="color:#aaa">Announce timeout</label>
+        <input id="inp-timeout" type="number" min="5" max="300" step="5"
+               style="width:52px;background:#222;color:#ddd;border:1px solid #444;border-radius:3px;padding:2px 4px;font:inherit">
+        <span style="color:#666">s</span>
       </div>
     </div>
 
@@ -208,11 +211,6 @@ label { display: flex; align-items: center; gap: 4px; color: #aaa; }
     <div class="stat-group">
       <h3>History (last 20)</h3>
       <div id="history"></div>
-    </div>
-
-    <div class="stat-group">
-      <h3>Queue (next 30)</h3>
-      <div id="queue-preview"></div>
     </div>
 
   </div><!-- #stats-panel -->
@@ -392,11 +390,10 @@ document.getElementById('btn-clear').addEventListener('click', () => {
 
 // ── control buttons ───────────────────────────────────────────────────────────
 function doControl(action) {
-  const skip = document.getElementById('chk-skip').checked;
   fetch('/api/control', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ action, skip_matching: skip }),
+    body: JSON.stringify({ action }),
   }).then(r => r.json()).then(d => {
     if (!d.ok && d.msg) alert(d.msg);
   });
@@ -572,6 +569,23 @@ function updateStatus(st) {
     qEl.textContent = 'empty';
   }
 }
+
+// ── announcement timeout config ───────────────────────────────────────────────
+fetch('/api/config').then(r => r.json()).then(d => {
+  document.getElementById('inp-timeout').value = d.announcement_timeout_s;
+});
+document.getElementById('inp-timeout').addEventListener('change', e => {
+  const v = parseInt(e.target.value);
+  if (!isNaN(v)) {
+    fetch('/api/config', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ announcement_timeout_s: v }),
+    }).then(r => r.json()).then(d => {
+      e.target.value = d.announcement_timeout_s;
+    });
+  }
+});
 
 setInterval(() => {
   fetch('/api/status').then(r => r.json()).then(updateStatus).catch(() => {});

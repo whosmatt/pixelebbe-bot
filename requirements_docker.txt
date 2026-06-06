@@ -1,0 +1,4 @@
+# Packages not in Debian apt (flask/requests/numpy/Pillow come from apt)
+# faster-whisper is optional; remove if image size matters
+# faster-whisper>=0.9.0
+scipy>=1.11.0

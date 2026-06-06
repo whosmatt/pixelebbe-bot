@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Pixelebbe Bot</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  background: #111;
+  color: #ddd;
+  font: 13px/1.4 monospace;
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+header {
+  background: #1c1c1c;
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-bottom: 1px solid #333;
+}
+header h1 { font-size: 15px; color: #aef; }
+.main {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+}
+
+/* ── canvas panel ────────────────────────────────────────────────── */
+#canvas-wrap {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  gap: 6px;
+}
+#canvas-area {
+  position: relative;
+  width: 640px;
+  height: 480px;
+  border: 1px solid #444;
+  cursor: crosshair;
+  flex-shrink: 0;
+}
+#bg-canvas, #draw-canvas, #grid-canvas {
+  position: absolute; top: 0; left: 0;
+  width: 640px; height: 480px;
+}
+#draw-canvas { cursor: crosshair; }
+#grid-canvas { pointer-events: none; opacity: 0.18; }
+
+/* ── palette ─────────────────────────────────────────────────────── */
+#palette-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  width: 640px;
+}
+.swatch {
+  width: 34px; height: 22px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+  border-radius: 2px;
+  position: relative;
+}
+.swatch:hover { border-color: #fff8; }
+.swatch.active { border-color: #fff; }
+.swatch.eraser {
+  background: repeating-linear-gradient(
+    45deg, #444 0 4px, #222 4px 8px) !important;
+}
+
+/* ── tool bar ────────────────────────────────────────────────────── */
+#toolbar {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+button {
+  padding: 4px 10px;
+  background: #2a2a2a;
+  border: 1px solid #555;
+  color: #ddd;
+  cursor: pointer;
+  border-radius: 3px;
+  font: inherit;
+}
+button:hover { background: #3a3a3a; }
+button.primary { border-color: #6af; color: #6af; }
+button.danger  { border-color: #f66; color: #f66; }
+button:disabled { opacity: 0.4; cursor: default; }
+label { display: flex; align-items: center; gap: 4px; color: #aaa; }
+
+/* ── stats panel ─────────────────────────────────────────────────── */
+#stats-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  gap: 10px;
+  overflow-y: auto;
+  border-left: 1px solid #333;
+  min-width: 260px;
+}
+.stat-group { background: #1a1a1a; border: 1px solid #333; border-radius: 4px; padding: 8px 10px; }
+.stat-group h3 { font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 6px; }
+.stat-row { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0; }
+.stat-val { color: #aef; font-weight: bold; }
+.call-status { font-size: 12px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 4px; background: #444; }
+.dot.green { background: #4f4; }
+.dot.orange { background: #fa4; }
+.dot.red { background: #f44; }
+.dot.blue { background: #4af; }
+
+#history { font-size: 11px; max-height: 260px; overflow-y: auto; }
+.hist-row { display: flex; gap: 6px; padding: 2px 0; border-bottom: 1px solid #222; }
+.hist-ok { color: #4f4; }
+.hist-fail { color: #f66; }
+
+#queue-preview { font-size: 11px; max-height: 160px; overflow-y: auto; color: #aaa; }
+
+/* progress bar */
+.prog-bar { height: 8px; background: #222; border-radius: 4px; overflow: hidden; margin-top: 4px; }
+.prog-fill { height: 100%; background: #4af; transition: width 0.4s; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Pixelebbe Bot</h1>
+  <span id="hdr-status" style="color:#888">idle</span>
+  <span style="flex:1"></span>
+  <a href="https://pixeleb.be/at/gpn24/" target="_blank" style="color:#6af;text-decoration:none;font-size:11px">open canvas ↗</a>
+</header>
+
+<div class="main">
+
+  <!-- left: canvas + palette + toolbar -->
+  <div id="canvas-wrap">
+    <div id="canvas-area">
+      <canvas id="bg-canvas"   width="640" height="480"></canvas>
+      <canvas id="grid-canvas" width="640" height="480"></canvas>
+      <canvas id="draw-canvas" width="640" height="480"></canvas>
+    </div>
+
+    <div id="palette-row">
+      <!-- eraser first -->
+      <div class="swatch eraser" title="Eraser" data-id="0"></div>
+    </div>
+
+    <div id="toolbar">
+      <button id="btn-refresh" title="Refresh background canvas">↺ Canvas</button>
+      <label><input type="checkbox" id="chk-grid" checked> Grid</label>
+      <label><input type="checkbox" id="chk-skip" checked> Skip matching pixels</label>
+      <span style="flex:1"></span>
+      <button id="btn-clear" class="danger">Clear drawing</button>
+    </div>
+  </div>
+
+  <!-- right: stats + controls -->
+  <div id="stats-panel">
+
+    <div class="stat-group">
+      <h3>Controls</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        <button id="btn-start" class="primary">&#9654; Start</button>
+        <button id="btn-pause">&#9208; Pause</button>
+        <button id="btn-stop"  class="danger">&#9632; Stop</button>
+      </div>
+      <div style="margin-top:8px;display:flex;align-items:center;gap:8px">
+        <button id="btn-monitor">&#128266; Monitor audio</button>
+        <canvas id="level-meter" width="140" height="12"
+                style="border:1px solid #333;border-radius:2px;vertical-align:middle"></canvas>
+        <span id="monitor-label" style="font-size:11px;color:#666">off</span>
+      </div>
+    </div>
+
+    <div class="stat-group">
+      <h3>Progress</h3>
+      <div class="stat-row"><span>Queued</span><span class="stat-val" id="s-pending">—</span></div>
+      <div class="stat-row"><span>Done</span><span class="stat-val" id="s-done" style="color:#4f4">—</span></div>
+      <div class="stat-row"><span>Failed</span><span class="stat-val" id="s-failed" style="color:#f66">—</span></div>
+      <div class="stat-row"><span>Rate</span><span class="stat-val" id="s-rate">—</span></div>
+      <div class="stat-row"><span>Elapsed</span><span class="stat-val" id="s-elapsed">—</span></div>
+      <div class="prog-bar"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+    </div>
+
+    <div class="stat-group">
+      <h3>Current call</h3>
+      <div class="stat-row">
+        <span>Status</span>
+        <span class="stat-val call-status">
+          <span class="dot" id="call-dot"></span><span id="s-call-status">idle</span>
+        </span>
+      </div>
+      <div class="stat-row"><span>Pixel</span><span class="stat-val" id="s-current-pixel">—</span></div>
+      <div class="stat-row"><span>Calls made</span><span class="stat-val" id="s-call-count">0</span></div>
+      <div id="s-last-error" style="color:#f88;font-size:11px;margin-top:4px"></div>
+    </div>
+
+    <div class="stat-group">
+      <h3>History (last 20)</h3>
+      <div id="history"></div>
+    </div>
+
+    <div class="stat-group">
+      <h3>Queue (next 30)</h3>
+      <div id="queue-preview"></div>
+    </div>
+
+  </div><!-- #stats-panel -->
+</div><!-- .main -->
+
+<script>
+// ── palette data injected by Flask ────────────────────────────────────────────
+const PALETTE = [
+  {% for name, hx, pid in palette %}
+  { id: {{ pid }}, name: "{{ name }}", hex: "{{ hx }}" },
+  {% endfor %}
+];
+
+// pixel scale: 4px per voice-bot pixel (160×120 → 640×480)
+const SCALE = 4;
+const CW = 160, CH = 120;
+
+// ── state ─────────────────────────────────────────────────────────────────────
+let activeColorId = PALETTE[0].id;
+let drawing = {};        // {x_y: color_id}
+let pendingUpdates = {}; // accumulate before flush
+let isPointerDown = false;
+let showGrid = true;
+
+const bgCtx   = document.getElementById('bg-canvas').getContext('2d');
+const drawCtx = document.getElementById('draw-canvas').getContext('2d');
+const gridCtx = document.getElementById('grid-canvas').getContext('2d');
+
+// ── build palette swatches ────────────────────────────────────────────────────
+const paletteRow = document.getElementById('palette-row');
+PALETTE.forEach(p => {
+  const s = document.createElement('div');
+  s.className = 'swatch';
+  s.dataset.id = p.id;
+  s.style.background = p.hex;
+  s.title = `${p.name} (${p.hex}) id=${p.id}`;
+  paletteRow.appendChild(s);
+});
+
+paletteRow.addEventListener('click', e => {
+  const sw = e.target.closest('.swatch');
+  if (!sw) return;
+  activeColorId = parseInt(sw.dataset.id);
+  document.querySelectorAll('.swatch').forEach(s => s.classList.remove('active'));
+  sw.classList.add('active');
+});
+// select first swatch
+paletteRow.querySelector('[data-id="1"]')?.classList.add('active');
+
+// ── grid overlay ──────────────────────────────────────────────────────────────
+function drawGrid() {
+  gridCtx.clearRect(0, 0, 640, 480);
+  if (!showGrid) return;
+  gridCtx.strokeStyle = '#fff';
+  gridCtx.lineWidth = 0.5;
+  // Light lines every SCALE (voice-bot pixel)
+  for (let x = 0; x <= CW; x++) {
+    gridCtx.globalAlpha = (x % 4 === 0) ? 0.25 : 0.08;
+    gridCtx.beginPath();
+    gridCtx.moveTo(x * SCALE, 0);
+    gridCtx.lineTo(x * SCALE, CH * SCALE);
+    gridCtx.stroke();
+  }
+  for (let y = 0; y <= CH; y++) {
+    gridCtx.globalAlpha = (y % 4 === 0) ? 0.25 : 0.08;
+    gridCtx.beginPath();
+    gridCtx.moveTo(0, y * SCALE);
+    gridCtx.lineTo(CW * SCALE, y * SCALE);
+    gridCtx.stroke();
+  }
+  gridCtx.globalAlpha = 1;
+}
+drawGrid();
+
+document.getElementById('chk-grid').addEventListener('change', e => {
+  showGrid = e.target.checked;
+  drawGrid();
+});
+
+// ── background canvas ─────────────────────────────────────────────────────────
+function refreshBg() {
+  fetch('/api/canvas')
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok || !d.data) return;
+      const img = new Image();
+      img.onload = () => {
+        bgCtx.imageSmoothingEnabled = false;
+        bgCtx.drawImage(img, 0, 0, 640, 480);
+      };
+      img.src = 'data:image/png;base64,' + d.data;
+    });
+}
+refreshBg();
+setInterval(refreshBg, 10000);
+document.getElementById('btn-refresh').addEventListener('click', refreshBg);
+
+// ── drawing layer render ──────────────────────────────────────────────────────
+const palMap = {};
+PALETTE.forEach(p => palMap[p.id] = p.hex);
+
+function renderDrawing() {
+  drawCtx.clearRect(0, 0, 640, 480);
+  for (const [key, cid] of Object.entries(drawing)) {
+    const [xs, ys] = key.split('_');
+    const x = parseInt(xs), y = parseInt(ys);
+    drawCtx.fillStyle = palMap[cid] || '#f0f';
+    drawCtx.globalAlpha = 0.85;
+    drawCtx.fillRect(x * SCALE, y * SCALE, SCALE, SCALE);
+  }
+  drawCtx.globalAlpha = 1;
+}
+
+// Load existing drawing from server
+fetch('/api/drawing').then(r => r.json()).then(d => {
+  drawing = d;
+  renderDrawing();
+});
+
+// ── drawing pointer events ────────────────────────────────────────────────────
+const drawCanvas = document.getElementById('draw-canvas');
+
+function paintAt(e) {
+  const rect = drawCanvas.getBoundingClientRect();
+  const px = Math.floor((e.clientX - rect.left) / SCALE);
+  const py = Math.floor((e.clientY - rect.top)  / SCALE);
+  if (px < 0 || px >= CW || py < 0 || py >= CH) return;
+  const key = `${px}_${py}`;
+  if (activeColorId === 0) {
+    delete drawing[key];
+    pendingUpdates[key] = 0;
+  } else {
+    drawing[key] = activeColorId;
+    pendingUpdates[key] = activeColorId;
+  }
+  renderDrawing();
+}
+
+drawCanvas.addEventListener('pointerdown', e => {
+  isPointerDown = true;
+  drawCanvas.setPointerCapture(e.pointerId);
+  paintAt(e);
+});
+drawCanvas.addEventListener('pointermove', e => {
+  if (!isPointerDown) return;
+  paintAt(e);
+});
+drawCanvas.addEventListener('pointerup',   () => { isPointerDown = false; flushUpdates(); });
+drawCanvas.addEventListener('pointerleave',() => { if (isPointerDown) flushUpdates(); });
+
+// ── flush pending updates to server (debounced) ───────────────────────────────
+let flushTimer = null;
+function flushUpdates() {
+  clearTimeout(flushTimer);
+  flushTimer = setTimeout(_doFlush, 300);
+}
+function _doFlush() {
+  if (!Object.keys(pendingUpdates).length) return;
+  const payload = Object.assign({}, pendingUpdates);
+  pendingUpdates = {};
+  fetch('/api/drawing', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  });
+}
+
+document.getElementById('btn-clear').addEventListener('click', () => {
+  if (!confirm('Clear all drawn pixels?')) return;
+  drawing = {};
+  pendingUpdates = {};
+  renderDrawing();
+  fetch('/api/drawing/clear', { method: 'POST' });
+});
+
+// ── control buttons ───────────────────────────────────────────────────────────
+function doControl(action) {
+  const skip = document.getElementById('chk-skip').checked;
+  fetch('/api/control', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ action, skip_matching: skip }),
+  }).then(r => r.json()).then(d => {
+    if (!d.ok && d.msg) alert(d.msg);
+  });
+}
+document.getElementById('btn-start').addEventListener('click', () => doControl('start'));
+document.getElementById('btn-stop') .addEventListener('click', () => doControl('stop'));
+document.getElementById('btn-pause').addEventListener('click', () => {
+  const paused = document.getElementById('btn-pause').dataset.paused === '1';
+  doControl(paused ? 'resume' : 'pause');
+});
+
+// ── audio monitor ─────────────────────────────────────────────────────────────
+let audioCtx = null;
+let nextPlayTime = 0;
+let monitorES = null;
+const meterCtx = document.getElementById('level-meter').getContext('2d');
+const UPSAMPLE = 6;        // 8 kHz → 48 kHz
+const LOOKAHEAD = 0.08;    // seconds of scheduling lookahead
+
+function meterDraw(rms) {
+  const w = 140, h = 12;
+  meterCtx.clearRect(0, 0, w, h);
+  // Background
+  meterCtx.fillStyle = '#1a1a1a';
+  meterCtx.fillRect(0, 0, w, h);
+  // Level bar (rms 0-32767)
+  const level = Math.min(rms / 12000, 1);
+  const hue = Math.round((1 - level) * 120);  // green → yellow → red
+  meterCtx.fillStyle = `hsl(${hue},90%,45%)`;
+  meterCtx.fillRect(0, 0, Math.round(level * w), h);
+}
+
+function startMonitor() {
+  if (monitorES) stopMonitor();
+  // AudioContext must be created (or resumed) after a user gesture
+  if (!audioCtx) {
+    audioCtx = new AudioContext({ sampleRate: 48000 });
+  } else if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  nextPlayTime = 0;
+
+  monitorES = new EventSource('/api/audio/stream');
+  monitorES.onopen = () => {
+    document.getElementById('monitor-label').textContent = 'live';
+    document.getElementById('monitor-label').style.color = '#4f4';
+    document.getElementById('btn-monitor').textContent = '🔇 Stop monitor';
+  };
+  monitorES.onmessage = e => {
+    if (!e.data || e.data.startsWith(':')) return;  // keepalive comment
+    // Decode base64 → Uint8Array → Int16Array
+    const raw = Uint8Array.from(atob(e.data), c => c.charCodeAt(0));
+    const pcm16 = new Int16Array(raw.buffer);
+    if (!pcm16.length) return;
+
+    // RMS for meter
+    let sum = 0;
+    for (let i = 0; i < pcm16.length; i++) sum += pcm16[i] * pcm16[i];
+    meterDraw(Math.sqrt(sum / pcm16.length));
+
+    // Upsample 8 kHz → 48 kHz (nearest-neighbour) and convert to float32
+    const f32 = new Float32Array(pcm16.length * UPSAMPLE);
+    for (let i = 0; i < pcm16.length; i++) {
+      const s = pcm16[i] / 32768.0;
+      for (let j = 0; j < UPSAMPLE; j++) f32[i * UPSAMPLE + j] = s;
+    }
+
+    // Schedule on Web Audio timeline
+    const buf = audioCtx.createBuffer(1, f32.length, 48000);
+    buf.copyToChannel(f32, 0);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    const startAt = Math.max(nextPlayTime, audioCtx.currentTime + LOOKAHEAD);
+    src.start(startAt);
+    nextPlayTime = startAt + buf.duration;
+  };
+  monitorES.onerror = () => {
+    document.getElementById('monitor-label').textContent = 'error';
+    document.getElementById('monitor-label').style.color = '#f66';
+  };
+}
+
+function stopMonitor() {
+  if (monitorES) { monitorES.close(); monitorES = null; }
+  meterDraw(0);
+  document.getElementById('monitor-label').textContent = 'off';
+  document.getElementById('monitor-label').style.color = '#666';
+  document.getElementById('btn-monitor').textContent = '🔈 Monitor audio';
+  nextPlayTime = 0;
+}
+
+document.getElementById('btn-monitor').addEventListener('click', () => {
+  if (monitorES) stopMonitor(); else startMonitor();
+});
+
+// ── status polling ────────────────────────────────────────────────────────────
+const DOT_COLOURS = {
+  idle: '', dialing: 'blue', ringing: 'orange', in_queue: 'orange',
+  sending_dtmf: 'blue', confirming: 'blue', done: 'green',
+};
+
+function fmtTime(s) {
+  if (!s) return '—';
+  const h = Math.floor(s/3600), m = Math.floor((s%3600)/60), sec = s%60;
+  return h ? `${h}h ${m}m` : m ? `${m}m ${sec}s` : `${sec}s`;
+}
+
+function updateStatus(st) {
+  document.getElementById('s-pending')     .textContent = st.pixels_pending ?? '—';
+  document.getElementById('s-done')        .textContent = st.pixels_done    ?? '—';
+  document.getElementById('s-failed')      .textContent = st.pixels_failed  ?? '—';
+  document.getElementById('s-rate')        .textContent = st.rate_per_hour != null ? st.rate_per_hour + '/hr' : '—';
+  document.getElementById('s-elapsed')     .textContent = fmtTime(st.elapsed_s);
+  document.getElementById('s-call-status') .textContent = st.call_status   ?? 'idle';
+  document.getElementById('s-call-count')  .textContent = st.call_count    ?? 0;
+  document.getElementById('s-last-error')  .textContent = st.last_error    ?? '';
+
+  const cp = st.current_pixel;
+  document.getElementById('s-current-pixel').textContent =
+    cp ? `(${cp.x}, ${cp.y}) → color ${cp.color_id}` : '—';
+
+  // dot
+  const dot = document.getElementById('call-dot');
+  dot.className = 'dot ' + (DOT_COLOURS[st.call_status] || '');
+
+  // header status
+  const hdr = document.getElementById('hdr-status');
+  if (st.running && !st.paused) {
+    hdr.textContent = '● running'; hdr.style.color = '#4f4';
+  } else if (st.paused) {
+    hdr.textContent = '⏸ paused'; hdr.style.color = '#fa4';
+  } else {
+    hdr.textContent = 'idle'; hdr.style.color = '#888';
+  }
+
+  // pause button text
+  const pbtn = document.getElementById('btn-pause');
+  if (st.paused) {
+    pbtn.textContent = '▶ Resume'; pbtn.dataset.paused = '1';
+  } else {
+    pbtn.textContent = '⏸ Pause';  pbtn.dataset.paused = '0';
+  }
+
+  // progress bar
+  const total = (st.pixels_done ?? 0) + (st.pixels_failed ?? 0) + (st.pixels_pending ?? 0);
+  const done  = (st.pixels_done ?? 0) + (st.pixels_failed ?? 0);
+  const pct = total > 0 ? Math.round(done / total * 100) : 0;
+  document.getElementById('prog-fill').style.width = pct + '%';
+
+  // history
+  const histEl = document.getElementById('history');
+  if (st.history && st.history.length) {
+    histEl.innerHTML = [...st.history].reverse().map(r => {
+      const cls = r.success ? 'hist-ok' : 'hist-fail';
+      const sym = r.success ? '✓' : '✗';
+      return `<div class="hist-row ${cls}">
+        <span>${sym}</span>
+        <span>(${r.x},${r.y}) c${r.color_id}</span>
+        <span style="color:#888">${r.reason}</span>
+        <span style="color:#666">${r.duration_s}s</span>
+      </div>`;
+    }).join('');
+  }
+
+  // queue preview
+  const qEl = document.getElementById('queue-preview');
+  if (st.queue_preview && st.queue_preview.length) {
+    qEl.innerHTML = st.queue_preview.map(p =>
+      `<span style="margin-right:8px">(${p.x},${p.y})→${p.color_id}</span>`
+    ).join('');
+  } else {
+    qEl.textContent = 'empty';
+  }
+}
+
+setInterval(() => {
+  fetch('/api/status').then(r => r.json()).then(updateStatus).catch(() => {});
+}, 1000);
+</script>
+</body>
+</html>

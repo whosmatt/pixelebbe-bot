@@ -1,0 +1,13 @@
+services:
+  pixelebbe:
+    build: .
+    ports:
+      - "5001:5001"
+    environment:
+      - SIP_SERVER=sip.micropoc.de
+      - SIP_USER=9379
+      - SIP_PASS=89783690294e
+      - HOTLINE_NUMBER=7321
+    volumes:
+      - ./drawing.json:/app/drawing.json  # persist drawing across restarts
+    restart: unless-stopped
